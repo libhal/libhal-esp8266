@@ -23,9 +23,7 @@ libhal_build_demos(
 
     PACKAGES
     libhal-esp8266
-    libhal-exceptions
 
     LINK_LIBRARIES
     libhal::esp8266
-    libhal::exceptions
 )
