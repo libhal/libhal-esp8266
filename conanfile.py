@@ -20,13 +20,12 @@ required_conan_version = ">=2.0.14"
 class libhal_esp8266_conan(ConanFile):
     name = "libhal-esp8266"
     license = "Apache-2.0"
-    url = "https://github.com/conan-io/conan-center-index"
     homepage = "https://github.com/libhal/libhal-esp8266"
     description = ("A collection of drivers for the esp8266")
     topics = ("esp8266", "wifi", "tcp/ip", "mcu")
     settings = "compiler", "build_type", "os", "arch"
 
-    python_requires = "libhal-bootstrap/[^0.0.5]"
+    python_requires = "libhal-bootstrap/[^1.0.0]"
     python_requires_extend = "libhal-bootstrap.library"
 
     def requirements(self):
