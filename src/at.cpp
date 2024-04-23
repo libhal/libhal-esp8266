@@ -312,7 +312,7 @@ std::span<const hal::byte> at::server_write(std::span<const hal::byte> p_data,
   using namespace std::literals;
 
   // Trim data to the maximum packet length.
-  p_data = p_data.subspan(0, maximum_transmit_packet_size);
+  p_data = p_data.first(std::min(p_data.size(), maximum_transmit_packet_size));
 
   hal::write(*m_serial, "AT+CIPSEND=", p_timeout);
   hal::write(*m_serial, uint_to_string(p_data.size()).str(), p_timeout);

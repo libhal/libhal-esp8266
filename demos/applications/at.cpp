@@ -18,7 +18,6 @@
 #include <libhal/timeout.hpp>
 
 #include "../hardware_map.hpp"
-#include "helper.hpp"
 
 void application(hardware_map_t& p_map)
 {
@@ -29,8 +28,8 @@ void application(hardware_map_t& p_map)
   auto& serial = *p_map.serial;
   auto& console = *p_map.console;
 
-  std::string_view ssid = "ssid";
-  std::string_view password = "password";
+  constexpr std::string_view ssid = "<insert ssid here>";
+  constexpr std::string_view password = "<insert password here>";
 
   hal::print(console, "ESP8266 WiFi Client Application Starting...\n");
 

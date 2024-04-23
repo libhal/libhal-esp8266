@@ -13,10 +13,10 @@
 // limitations under the License.
 
 #include <array>
-#include <cinttypes>
 #include <string_view>
 
 #include <libhal-esp8266/at.hpp>
+#include <libhal-util/as_bytes.hpp>
 #include <libhal-util/serial.hpp>
 #include <libhal-util/steady_clock.hpp>
 #include <libhal-util/streams.hpp>
@@ -24,7 +24,6 @@
 #include <libhal/timeout.hpp>
 
 #include "../hardware_map.hpp"
-#include "helper.hpp"
 
 namespace {
 enum class connection_state
@@ -116,26 +115,53 @@ void establish_connection(hal::esp8266::at& p_esp8266,
   }
 }
 
-struct http_header_parser_t
+class stream_http_get
 {
-  hal::stream_find find_header_start;
-  hal::stream_find find_content_length;
-  hal::stream_parse<std::uint32_t> parse_content_length;
-  hal::stream_find find_end_of_header;
+public:
+  friend std::span<const hal::byte> operator|(
+    const std::span<const hal::byte>& p_input_data,
+    stream_http_get& p_self)
+  {
+    if (hal::finished(p_self)) {
+      return {};
+    }
+
+    const auto remaining = p_input_data | p_self.m_find_start |
+                           p_self.m_find_length | p_self.m_parse_length |
+                           p_self.m_find_end | p_self.m_skip_final;
+
+    if (hal::finished(p_self.m_skip_final)) {
+      const auto length = p_self.m_parse_length.value();
+      const auto transmit_size = std::min(remaining.size(), length);
+      const auto result = remaining.first(transmit_size);
+      p_self.m_body_bytes_transmitted += transmit_size;
+      return result;
+    }
+
+    return {};
+  }
+
+  hal::work_state state()
+  {
+    if (hal::finished(m_find_end) and
+        m_body_bytes_transmitted >= m_parse_length.value()) {
+      return hal::work_state::finished;
+    }
+    return hal::work_state::in_progress;
+  }
+
+private:
+  static constexpr std::string_view start_sv{ "HTTP/1.1 " };
+  static constexpr std::string_view length_sv{ "Content-Length: " };
+  static constexpr std::string_view end_sv{ "\r\n\r\n" };
+
+  hal::stream_find m_find_start{ hal::as_bytes(start_sv) };
+  hal::stream_find m_find_length{ hal::as_bytes(length_sv) };
+  hal::stream_parse<size_t> m_parse_length{};
+  hal::stream_find m_find_end{ hal::as_bytes(end_sv) };
+  hal::stream_skip m_skip_final{ 1 };
+  size_t m_body_bytes_transmitted = 0;
 };
-
-http_header_parser_t new_http_header_parser()
-{
-  using namespace std::literals;
-
-  return http_header_parser_t{
-    .find_header_start = hal::stream_find(hal::as_bytes("HTTP/1.1 "sv)),
-    .find_content_length =
-      hal::stream_find(hal::as_bytes("Content-Length: "sv)),
-    .parse_content_length = hal::stream_parse<std::uint32_t>(),
-    .find_end_of_header = hal::stream_find(hal::as_bytes("\r\n\r\n"sv)),
-  };
-}
 }  // namespace
 
 void application(hardware_map_t& p_map)
@@ -148,8 +174,8 @@ void application(hardware_map_t& p_map)
   auto& serial = *p_map.serial;
   auto& console = *p_map.console;
 
-  constexpr std::string_view ssid = "Stellic";
-  constexpr std::string_view password = "misosoupisgreat";
+  constexpr std::string_view ssid = "<insert ssid here>";
+  constexpr std::string_view password = "<insert password here>";
   constexpr auto socket_config = hal::esp8266::at::socket_config{
     .type = hal::esp8266::at::socket_type::tcp,
     .domain = "httpstat.us",
@@ -160,7 +186,7 @@ void application(hardware_map_t& p_map)
   constexpr std::string_view ip = "";
 
   // 128B buffer to read data into
-  std::array<hal::byte, 128> buffer{};
+  std::array<hal::byte, 64> buffer{};
 
   hal::print(console, "ESP8266 WiFi Client Application Starting...\n");
 
@@ -170,30 +196,17 @@ void application(hardware_map_t& p_map)
   hal::esp8266::at esp8266(serial, timeout);
   hal::print(console, "esp8266 created & initialized!! \n");
 
-  // Establish connection with AP & web server
-  try {
-    establish_connection(
-      esp8266, console, ssid, password, socket_config, ip, timeout);
-
-  }
-  // TODO: Update this to use hal::exception or a more specific exception like
-  // hal::timed_out
-  catch (...) {
-    hal::print(console,
-               "esp8266 couldn't establish a connection to AP and/or server, "
-               "restarting!! \n");
-    throw;
-  }
-
-  auto http_header_parser = new_http_header_parser();
-  // Skip of 0 means it starts in the finished state.
-  auto skip_payload = hal::stream_skip(0);
-  bool header_finished = false;
-  bool read_complete = true;
-  bool write_error = false;
-  auto read_timeout = hal::create_timeout(counter, 1000ms);
   constexpr auto graph_cutoff = 2s;
+  stream_http_get http_get;
+  auto read_timeout = hal::create_timeout(counter, 1000ms);
   auto bandwidth_timeout = hal::create_timeout(counter, graph_cutoff);
+  enum class benchmark_state
+  {
+    connect,
+    make_request,
+    read,
+  };
+  benchmark_state state = benchmark_state::connect;
 
   std::array<std::string_view, 5> table{
     "\n",
@@ -203,79 +216,63 @@ void application(hardware_map_t& p_map)
     "   +  |",
   };
 
-  for (const auto& line : table) {
-    hal::print(console, line);
-  }
-
   while (true) {
-    if (write_error) {
-      hal::print(console, "Reconnecting...\n");
-      // Wait 1s before attempting to reconnect
-      hal::delay(counter, 1s);
-
-      timeout = hal::create_timeout(counter, 20s);
-      try {
-        establish_connection(
-          esp8266, console, ssid, password, socket_config, ip, timeout);
+    switch (state) {
+      case benchmark_state::connect: {
+        hal::print(console, "Connecting...\n");
+        timeout = hal::create_timeout(counter, 20s);
+        try {
+          establish_connection(
+            esp8266, console, ssid, password, socket_config, ip, timeout);
+        }
+        // TODO: Update this to use hal::exception or a more specific exception
+        // like hal::timed_out
+        catch (...) {
+          continue;
+        }
+        for (const auto& line : table) {
+          hal::print(console, line);
+        }
+        state = benchmark_state::make_request;
+        [[fallthrough]];
       }
-      // TODO: Update this to use hal::exception or a more specific exception
-      // like hal::timed_out
-      catch (...) {
-        continue;
+      case benchmark_state::make_request: {
+        hal::delay(counter, 10ms);
+
+        try {
+          // Send out HTTP GET request
+          timeout = hal::create_timeout(counter, 500ms);
+          // Minimalist GET request to example.com domain
+          std::string_view get_request = "GET /200 HTTP/1.1\r\n"
+                                         "Host: httpstat.us:80\r\n"
+                                         "\r\n";
+          [[maybe_unused]] const auto transmitted =
+            esp8266.server_write(hal::as_bytes(get_request), timeout);
+        }
+        // TODO: Update this to use hal::exception or a more specific exception
+        // like hal::timed_out
+        catch (...) {
+          hal::print(console, "\nFailed to write to server!\n");
+          state = benchmark_state::connect;
+          continue;
+        }
+        read_timeout = hal::create_timeout(counter, 1000ms);
+        http_get = stream_http_get();
+        state = benchmark_state::read;
+        [[fallthrough]];
       }
-      write_error = false;
-    }
+      case benchmark_state::read: {
+        // Take data received from server and pass it to http_get
+        // hal::delay(counter, 1s);
+        const auto received = esp8266.server_read(buffer);
+        [[maybe_unused]] const auto body_parts = received | http_get;
 
-    if (read_complete) {
-      // Minimalist GET request to example.com domain
-      static constexpr std::string_view get_request = "GET /200 HTTP/1.1\r\n"
-                                                      "Host: httpstat.us:80\r\n"
-                                                      "\r\n";
+        if (hal::finished(http_get)) {
+          hal::print(console, ".");
+          state = benchmark_state::make_request;
+        }
 
-      hal::delay(counter, 50ms);
-
-      // Send out HTTP GET request
-      timeout = hal::create_timeout(counter, 500ms);
-
-      try {
-        static_cast<void>(
-          esp8266.server_write(hal::as_bytes(get_request), timeout));
-      }
-      // TODO: Update this to use hal::exception or a more specific exception
-      // like hal::timed_out
-      catch (...) {
-        hal::print(console, "\nFailed to write to server!\n");
-        write_error = true;
-        continue;
-      }
-
-      read_complete = false;
-      header_finished = false;
-      read_timeout = hal::create_timeout(counter, 1000ms);
-    }
-
-    auto received = esp8266.server_read(buffer);
-    auto remainder = received | http_header_parser.find_header_start |
-                     http_header_parser.find_content_length |
-                     http_header_parser.parse_content_length |
-                     http_header_parser.find_end_of_header;
-
-    if (!header_finished &&
-        hal::finished(http_header_parser.find_end_of_header)) {
-      auto content_length = http_header_parser.parse_content_length.value();
-      skip_payload = hal::stream_skip(content_length);
-      header_finished = true;
-    }
-
-    if (header_finished && hal::in_progress(skip_payload)) {
-      remainder | skip_payload;
-      if (hal::finished(skip_payload.state())) {
-        read_complete = true;
-
-        http_header_parser = new_http_header_parser();
-        skip_payload = hal::stream_skip(0);
-
-        hal::print(console, ".");
+        break;
       }
     }
 
@@ -284,12 +281,13 @@ void application(hardware_map_t& p_map)
       bandwidth_timeout();
     } catch (const hal::timed_out& p_exception) {
       if (&read_timeout == p_exception.instance()) {
-        hal::print(console, "X");
-        read_complete = true;
+        hal::print(console, "X\n\n");
+        state = benchmark_state::connect;
       }
-      // TODO: Replace this exceptional bandwidth timeout with a variant that
-      // simply returns if the timeout has occurred. This is not its intended
-      // purpose but does demonstrates proper usage of `p_exception.instance()`.
+      // TODO: Replace this exceptional bandwidth timeout with a variant
+      // that simply returns if the timeout has occurred. This is not its
+      // intended purpose but does demonstrates proper usage of
+      // `p_exception.instance()`.
       else if (&bandwidth_timeout == p_exception.instance()) {
         hal::print(console, "\n   +  |");
         bandwidth_timeout = hal::create_timeout(counter, graph_cutoff);
