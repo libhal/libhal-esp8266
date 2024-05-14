@@ -25,7 +25,7 @@ class libhal_esp8266_conan(ConanFile):
     topics = ("esp8266", "wifi", "tcp/ip", "mcu")
     settings = "compiler", "build_type", "os", "arch"
 
-    python_requires = "libhal-bootstrap/[^1.0.0]"
+    python_requires = "libhal-bootstrap/[^2.0.0]"
     python_requires_extend = "libhal-bootstrap.library"
 
     def requirements(self):
