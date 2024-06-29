@@ -170,8 +170,8 @@ public:
    * @throws hal::timed_out - if the operation did not complete in the time
    * specified.
    */
-  [[nodiscard]] std::span<const hal::byte> server_write(
-    std::span<const hal::byte> p_data,
+  [[nodiscard]] std::span<hal::byte const> server_write(
+    std::span<hal::byte const> p_data,
     deadline p_timeout);
 
   /**

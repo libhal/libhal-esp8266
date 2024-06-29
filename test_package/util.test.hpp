@@ -28,7 +28,7 @@ namespace hal::esp8266 {
 class stream_out
 {
 public:
-  stream_out(std::span<const hal::byte> p_output)
+  stream_out(std::span<hal::byte const> p_output)
     : m_output(p_output)
   {
   }
@@ -56,18 +56,18 @@ public:
   }
 
 private:
-  std::span<const hal::byte> m_output{};
+  std::span<hal::byte const> m_output{};
 };
 
 struct mock_serial : public hal::serial
 {
-  void driver_configure(const settings&) override
+  void driver_configure(settings const&) override
   {
   }
 
-  write_t driver_write(std::span<const hal::byte> p_data) override
+  write_t driver_write(std::span<hal::byte const> p_data) override
   {
-    for (const auto& byte : p_data) {
+    for (auto const& byte : p_data) {
       putchar(static_cast<char>(byte));
     }
 
