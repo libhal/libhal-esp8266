@@ -49,10 +49,10 @@ enum class connection_state
  */
 void establish_connection(hal::esp8266::at& p_esp8266,
                           hal::serial& p_console,
-                          const std::string_view p_ssid,
-                          const std::string_view p_password,
-                          const hal::esp8266::at::socket_config& p_config,
-                          const std::string_view p_ip,
+                          std::string_view const p_ssid,
+                          std::string_view const p_password,
+                          hal::esp8266::at::socket_config const& p_config,
+                          std::string_view const p_ip,
                           hal::timeout auto& p_timeout)
 {
   connection_state state = connection_state::check_ap_connection;
@@ -118,22 +118,22 @@ void establish_connection(hal::esp8266::at& p_esp8266,
 class stream_http_get
 {
 public:
-  friend std::span<const hal::byte> operator|(
-    const std::span<const hal::byte>& p_input_data,
+  friend std::span<hal::byte const> operator|(
+    std::span<hal::byte const> const& p_input_data,
     stream_http_get& p_self)
   {
     if (hal::finished(p_self)) {
       return {};
     }
 
-    const auto remaining = p_input_data | p_self.m_find_start |
+    auto const remaining = p_input_data | p_self.m_find_start |
                            p_self.m_find_length | p_self.m_parse_length |
                            p_self.m_find_end | p_self.m_skip_final;
 
     if (hal::finished(p_self.m_skip_final)) {
-      const auto length = p_self.m_parse_length.value();
-      const auto transmit_size = std::min(remaining.size(), length);
-      const auto result = remaining.first(transmit_size);
+      auto const length = p_self.m_parse_length.value();
+      auto const transmit_size = std::min(remaining.size(), length);
+      auto const result = remaining.first(transmit_size);
       p_self.m_body_bytes_transmitted += transmit_size;
       return result;
     }
@@ -230,7 +230,7 @@ void application(hardware_map_t& p_map)
         catch (...) {
           continue;
         }
-        for (const auto& line : table) {
+        for (auto const& line : table) {
           hal::print(console, line);
         }
         state = benchmark_state::make_request;
@@ -246,7 +246,7 @@ void application(hardware_map_t& p_map)
           std::string_view get_request = "GET /200 HTTP/1.1\r\n"
                                          "Host: httpstat.us:80\r\n"
                                          "\r\n";
-          [[maybe_unused]] const auto transmitted =
+          [[maybe_unused]] auto const transmitted =
             esp8266.server_write(hal::as_bytes(get_request), timeout);
         }
         // TODO: Update this to use hal::exception or a more specific exception
@@ -264,8 +264,8 @@ void application(hardware_map_t& p_map)
       case benchmark_state::read: {
         // Take data received from server and pass it to http_get
         // hal::delay(counter, 1s);
-        const auto received = esp8266.server_read(buffer);
-        [[maybe_unused]] const auto body_parts = received | http_get;
+        auto const received = esp8266.server_read(buffer);
+        [[maybe_unused]] auto const body_parts = received | http_get;
 
         if (hal::finished(http_get)) {
           hal::print(console, ".");
@@ -279,7 +279,7 @@ void application(hardware_map_t& p_map)
     try {
       read_timeout();
       bandwidth_timeout();
-    } catch (const hal::timed_out& p_exception) {
+    } catch (hal::timed_out const& p_exception) {
       if (&read_timeout == p_exception.instance()) {
         hal::print(console, "X\n\n");
         state = benchmark_state::connect;

@@ -282,7 +282,7 @@ void at::disconnect_from_ap(deadline p_timeout)
 
 void at::connect_to_server(socket_config p_config, deadline p_timeout)
 {
-  const auto expected_response = hal::as_bytes(ok_response);
+  auto const expected_response = hal::as_bytes(ok_response);
 
   std::string_view socket_type_str;
 
@@ -306,7 +306,7 @@ void at::connect_to_server(socket_config p_config, deadline p_timeout)
   hal::try_until(skip_past(*m_serial, expected_response), p_timeout);
 }
 
-std::span<const hal::byte> at::server_write(std::span<const hal::byte> p_data,
+std::span<hal::byte const> at::server_write(std::span<hal::byte const> p_data,
                                             deadline p_timeout)
 {
   using namespace std::literals;

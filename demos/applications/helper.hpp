@@ -38,12 +38,12 @@ public:
   {
   }
 
-  void driver_configure(const settings& p_settings) override
+  void driver_configure(settings const& p_settings) override
   {
     return m_primary->configure(p_settings);
   }
 
-  hal::serial::write_t driver_write(std::span<const hal::byte> p_data) override
+  hal::serial::write_t driver_write(std::span<hal::byte const> p_data) override
   {
     hal::write(*m_mirror, "WRITE:[", hal::never_timeout());
     m_mirror->write(p_data);
@@ -73,8 +73,8 @@ private:
   hal::serial* m_mirror;
 };
 
-inline std::string_view to_string_view(std::span<const hal::byte> p_span)
+inline std::string_view to_string_view(std::span<hal::byte const> p_span)
 {
-  return std::string_view(reinterpret_cast<const char*>(p_span.data()),
+  return std::string_view(reinterpret_cast<char const*>(p_span.data()),
                           p_span.size());
 }
